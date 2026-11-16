@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Multi-Shop POS</title>
+  <title>Multi-Shop POS & Admin</title>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0f172a" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -12,14 +12,40 @@
 </head>
 <body class="bg-slate-100 text-slate-900 pb-20 select-none">
 
-  <!-- Header with Shop Selector -->
+  <!-- LOGIN SCREEN OVERLAY -->
+  <div id="login-overlay" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm p-6 rounded-2xl shadow-xl space-y-4">
+      <div class="text-center">
+        <h1 class="text-xl font-bold text-slate-900">Shop Login</h1>
+        <p class="text-xs text-slate-500">Sign in as Admin or Shopkeeper</p>
+      </div>
+      <form id="login-form" class="space-y-3">
+        <div>
+          <label class="text-xs font-medium text-slate-600">Username</label>
+          <input id="login-user" type="text" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:border-slate-900" placeholder="e.g. admin or makumi" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Password</label>
+          <input id="login-pass" type="password" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:border-slate-900" placeholder="••••••••" />
+        </div>
+        <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl text-sm shadow">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main App Header -->
   <header class="bg-slate-900 text-white p-3 sticky top-0 z-25 flex flex-col gap-2 shadow">
     <div class="flex justify-between items-center">
-      <h1 class="font-bold text-base tracking-wide">Multi-Shop POS</h1>
-      <span class="text-xs px-2 py-0.5 rounded bg-emerald-600">Cloud Active</span>
+      <h1 id="app-title" class="font-bold text-base tracking-wide">POS System</h1>
+      <div class="flex items-center gap-2">
+        <span id="user-badge" class="text-xs px-2 py-0.5 rounded bg-blue-600 font-medium"></span>
+        <button onclick="logout()" class="text-xs bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded">Logout</button>
+      </div>
     </div>
-    <!-- Shop Switcher Dropdown -->
-    <div class="flex items-center gap-2 bg-slate-800 p-2 rounded-lg">
+    <!-- Shop Switcher (Admin Only or display assigned shop for shopkeeper) -->
+    <div id="shop-switcher-wrapper" class="flex items-center gap-2 bg-slate-800 p-2 rounded-lg">
       <span class="text-xs text-slate-400 whitespace-nowrap">Active Shop:</span>
       <select id="shop-selector" class="w-full bg-slate-900 text-white text-sm font-semibold rounded px-2 py-1 focus:outline-none">
         <option value="1">Makumi Kihanya Traders</option>
@@ -28,7 +54,7 @@
     </div>
   </header>
 
-  <!-- TAB 1: SELL (UPTAKE) -->
+  <!-- TAB 1: SELL -->
   <main id="tab-sell" class="p-4 space-y-4">
     <div class="bg-white p-3 rounded-xl shadow-sm space-y-3">
       <div class="flex gap-2">
@@ -42,7 +68,6 @@
       <div id="search-results" class="divide-y divide-slate-100 max-h-40 overflow-y-auto"></div>
     </div>
 
-    <!-- Current Cart -->
     <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
       <h2 class="font-semibold text-slate-700">Current Basket</h2>
       <div id="cart-list" class="divide-y divide-slate-100 text-sm">
@@ -57,7 +82,6 @@
         <span id="cart-profit">0.00</span>
       </div>
 
-      <!-- Payment Method -->
       <div class="pt-2 border-t">
         <label class="block text-xs font-medium text-slate-500 mb-1">Payment Method:</label>
         <div class="grid grid-cols-2 gap-2">
@@ -76,25 +100,25 @@
     </div>
   </main>
 
-  <!-- TAB 2: STOCK (INTAKE & INVENTORY) -->
+  <!-- TAB 2: STOCK -->
   <section id="tab-stock" class="hidden p-4 space-y-4">
     <form id="stock-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Add Stock or Restock for Active Shop</h2>
+      <h2 class="font-semibold text-slate-700">Add Stock & Prices</h2>
       <input id="item-name" type="text" placeholder="Item Name (e.g., Sugar 1kg)" required
         class="w-full border border-slate-300 rounded-lg px-3 py-2" />
       <div class="flex gap-2">
         <input id="item-code" type="text" placeholder="QR / Barcode (Optional)"
           class="w-full border border-slate-300 rounded-lg px-3 py-2" />
         <button type="button" id="scan-stock-code-btn" class="bg-slate-200 px-3 py-2 rounded-lg text-sm font-medium">
-          Scan Code
+          Scan
         </button>
       </div>
       <div id="stock-reader" class="hidden rounded-lg overflow-hidden"></div>
 
-      <!-- Price Sync Option -->
-      <div class="bg-slate-50 p-2.5 rounded-lg border flex items-center gap-2">
+      <!-- Admin Price Sync Control -->
+      <div id="price-sync-container" class="bg-slate-50 p-2.5 rounded-lg border flex items-center gap-2">
         <input type="checkbox" id="sync-price-check" checked class="w-4 h-4 accent-slate-900" />
-        <label for="sync-price-check" class="text-xs text-slate-700 font-medium">Sync price globally across both shops</label>
+        <label for="sync-price-check" class="text-xs text-slate-700 font-medium">Admin: Sync price globally across both shops</label>
       </div>
 
       <div class="grid grid-cols-3 gap-2">
@@ -112,12 +136,12 @@
         </div>
       </div>
       <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
-        Save Stock for Selected Shop
+        Save Stock
       </button>
     </form>
 
     <div class="bg-white p-4 rounded-xl shadow-sm">
-      <h2 id="inventory-title" class="font-semibold text-slate-700 mb-2">Inventory</h2>
+      <h2 class="font-semibold text-slate-700 mb-2">Inventory & Stock Status</h2>
       <div id="inventory-list" class="divide-y divide-slate-100 text-sm"></div>
     </div>
   </section>
@@ -125,7 +149,7 @@
   <!-- TAB 3: EXPENSES -->
   <section id="tab-expenses" class="hidden p-4 space-y-4">
     <form id="expense-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Log Daily Expenditure (Active Shop)</h2>
+      <h2 class="font-semibold text-slate-700">Log Daily Expenditure</h2>
       <input id="exp-desc" type="text" placeholder="Description (e.g., Transport, Electricity)" required
         class="w-full border border-slate-300 rounded-lg px-3 py-2" />
       <input id="exp-amount" type="number" step="0.01" placeholder="Amount Spent" required
@@ -141,15 +165,15 @@
     </div>
   </section>
 
-  <!-- TAB 4: RECORDS & REPORTS -->
-  <section id="tab-records" class="hidden p-4 space-y-4">
+  <!-- TAB 4: REPORTS & ANALYTICS -->
+  <section id="tab-reports" class="hidden p-4 space-y-4">
     <div class="grid grid-cols-2 gap-3">
       <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">Cash Sales Today</p>
+        <p class="text-xs text-slate-500">Cash Sales</p>
         <p id="cash-revenue" class="text-lg font-bold text-slate-900">0.00</p>
       </div>
       <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">M-Pesa Sales Today</p>
+        <p class="text-xs text-slate-500">M-Pesa Sales</p>
         <p id="mpesa-revenue" class="text-lg font-bold text-emerald-600">0.00</p>
       </div>
     </div>
@@ -162,6 +186,25 @@
       <div class="bg-white p-4 rounded-xl shadow-sm">
         <p class="text-xs text-slate-500">Net Profit</p>
         <p id="total-profit" class="text-lg font-bold text-blue-600">0.00</p>
+      </div>
+    </div>
+
+    <!-- Advanced Analytics & Highlights -->
+    <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+      <h2 class="font-semibold text-slate-700">Shop Performance Highlights</h2>
+      <div class="text-xs space-y-2">
+        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Most Sold Item:</span> <span id="stat-most-sold" class="font-semibold">N/A</span></div>
+        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Highest Profit Item:</span> <span id="stat-max-profit" class="font-semibold text-emerald-600">N/A</span></div>
+        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Least Sold Item:</span> <span id="stat-least-sold" class="font-semibold">N/A</span></div>
+        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Out of Stock Count:</span> <span id="stat-out-stock" class="font-semibold text-red-600">0 items</span></div>
+      </div>
+    </div>
+
+    <!-- Stock Addition Notifications Feed -->
+    <div class="bg-white p-4 rounded-xl shadow-sm">
+      <h2 class="font-semibold text-slate-700 mb-2">Stock Addition Activity Log</h2>
+      <div id="stock-notifications-list" class="divide-y divide-slate-100 text-xs max-h-36 overflow-y-auto">
+        <p class="text-slate-400 py-1">No recent stock additions.</p>
       </div>
     </div>
 
@@ -180,7 +223,7 @@
     <button onclick="switchTab('sell')" class="nav-btn font-bold text-slate-900 flex flex-col items-center text-xs"><span>Sell</span></button>
     <button onclick="switchTab('stock')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Stock</span></button>
     <button onclick="switchTab('expenses')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Expenses</span></button>
-    <button onclick="switchTab('records')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Reports</span></button>
+    <button onclick="switchTab('reports')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Reports</span></button>
   </nav>
 
   <script src="app.js"></script>
