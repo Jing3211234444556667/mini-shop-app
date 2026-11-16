@@ -5,7 +5,7 @@ const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let currentUser = JSON.parse(localStorage.getItem('shop_current_user') || 'null');
 let currentShopId = 1;
-let cart = [];
+let cart = []; // Holds FIFO batch lines: { batchId, productId, name, qty, buyPrice, sellPrice }
 let html5QrCode = null;
 let isScanning = false;
 
@@ -51,7 +51,6 @@ function initializeRoleView() {
   const shopSelector = document.getElementById('shop-selector');
 
   if (currentUser.role === 'admin') {
-    // Show Admin Portal Only (Hide POS)
     document.getElementById('admin-view').classList.remove('hidden');
     document.getElementById('shopkeeper-view').classList.add('hidden');
     document.getElementById('app-title').textContent = 'Admin Manager Portal';
@@ -61,7 +60,6 @@ function initializeRoleView() {
     currentShopId = parseInt(shopSelector.value, 10);
     loadAdminInventory();
   } else {
-    // Show Shopkeeper POS View Only
     document.getElementById('shopkeeper-view').classList.remove('hidden');
     document.getElementById('admin-view').classList.add('hidden');
     const shopName = currentUser.shop_id === 1 ? 'Makumi Kihanya Traders' : 'God\'s Grace Shop';
@@ -73,11 +71,9 @@ function initializeRoleView() {
   }
 }
 
-// Admin Shop Switcher Event
 document.getElementById('shop-selector').addEventListener('change', (e) => {
   if (currentUser.role === 'admin') {
     currentShopId = parseInt(e.target.value, 10);
-    // Refresh whichever Admin tab is currently open
     if (!document.getElementById('admin-tab-stock').classList.contains('hidden')) loadAdminInventory();
     if (!document.getElementById('admin-tab-finance').classList.contains('hidden')) loadAdminFinances();
     if (!document.getElementById('admin-tab-reports').classList.contains('hidden')) loadAdminReports();
@@ -85,7 +81,7 @@ document.getElementById('shop-selector').addEventListener('change', (e) => {
 });
 
 // =========================================================
-// ADMIN NAVIGATION & FUNCTIONS
+// ADMIN NAVIGATION & FIFO BATCH MANAGEMENT
 // =========================================================
 window.switchAdminTab = function(tabId) {
   ['admin-tab-stock', 'admin-tab-finance', 'admin-tab-reports'].forEach(id => {
@@ -98,7 +94,7 @@ window.switchAdminTab = function(tabId) {
   if (tabId === 'admin-tab-reports') loadAdminReports();
 };
 
-// Admin Add / Update Stock
+// Admin Add Stock (Creates a new FIFO batch without overwriting old prices)
 document.getElementById('admin-stock-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = document.getElementById('item-name').value.trim();
@@ -108,6 +104,7 @@ document.getElementById('admin-stock-form').addEventListener('submit', async (e)
   const qty = parseInt(document.getElementById('item-qty').value, 10);
   const sync_price = document.getElementById('sync-price-check').checked;
 
+  // 1. Find or create global product entry
   let { data: product } = await _supabase
     .from('products')
     .select('*')
@@ -124,8 +121,6 @@ document.getElementById('admin-stock-form').addEventListener('submit', async (e)
         sync_price: true,
         barcode: barcode || product.barcode
       }).eq('id', productId);
-    } else {
-      await _supabase.from('products').update({ sync_price: false }).eq('id', productId);
     }
   } else {
     const { data: newProd, error } = await _supabase.from('products').insert([{
@@ -135,59 +130,55 @@ document.getElementById('admin-stock-form').addEventListener('submit', async (e)
     productId = newProd.id;
   }
 
-  const { data: shopInv } = await _supabase
-    .from('shop_inventory')
-    .select('*')
-    .eq('shop_id', currentShopId)
-    .eq('product_id', productId)
-    .maybeSingle();
+  // 2. Insert a brand new FIFO Stock Batch for this shop
+  const { error: batchErr } = await _supabase.from('stock_batches').insert([{
+    shop_id: currentShopId,
+    product_id: productId,
+    buy_price: buy_price,
+    sell_price: sell_price,
+    initial_qty: qty,
+    remaining_qty: qty
+  }]);
 
-  if (shopInv) {
-    await _supabase.from('shop_inventory').update({
-      stock: shopInv.stock + qty,
-      local_buy_price: sync_price ? null : buy_price,
-      local_sell_price: sync_price ? null : sell_price
-    }).eq('id', shopInv.id);
-  } else {
-    await _supabase.from('shop_inventory').insert([{
-      shop_id: currentShopId, product_id: productId, stock: qty,
-      local_buy_price: sync_price ? null : buy_price, local_sell_price: sync_price ? null : sell_price
-    }]);
+  if (batchErr) {
+    alert('Error saving batch: ' + batchErr.message);
+    return;
   }
 
+  // 3. Log activity notification
   await _supabase.from('stock_logs').insert([{
     shop_id: currentShopId, product_name: name, qty_added: qty, timestamp: new Date().toISOString()
   }]);
 
   e.target.reset();
   loadAdminInventory();
-  alert('Stock updated successfully!');
+  alert(`Added batch of ${qty} x ${name} @ ${sell_price} (Old batches remain at their original prices until sold out!)`);
 });
 
-// Admin Load & Remove Stock Items
+// Admin Load Active FIFO Batches
 async function loadAdminInventory() {
-  const { data: inventory } = await _supabase
-    .from('shop_inventory')
+  const { data: batches } = await _supabase
+    .from('stock_batches')
     .select('*, products(*)')
-    .eq('shop_id', currentShopId);
+    .eq('shop_id', currentShopId)
+    .gt('remaining_qty', 0)
+    .order('created_at', { ascending: true });
 
   const list = document.getElementById('admin-inventory-list');
-  if (!inventory || inventory.length === 0) {
-    list.innerHTML = '<p class="text-slate-400 py-2">No items in stock for this shop.</p>';
+  if (!batches || batches.length === 0) {
+    list.innerHTML = '<p class="text-slate-400 py-2">No active stock batches in this shop.</p>';
     return;
   }
 
-  list.innerHTML = inventory.map(inv => {
-    const p = inv.products;
-    const sell = p.sync_price ? p.global_sell_price : (inv.local_sell_price ?? p.global_sell_price);
-    const buy = p.sync_price ? p.global_buy_price : (inv.local_buy_price ?? p.global_buy_price);
+  list.innerHTML = batches.map((b, index) => {
+    const dateAdded = new Date(b.created_at).toLocaleDateString();
     return `
       <div class="py-2.5 flex justify-between items-center">
         <div>
-          <p class="font-medium">${p.name} <span class="text-xs text-slate-400">(${inv.stock} left)</span></p>
-          <p class="text-xs text-slate-500">Buy: ${buy} | Sell: ${sell} ${p.sync_price ? '• Synced' : '• Local Price'}</p>
+          <p class="font-medium">${b.products.name} <span class="text-xs bg-slate-200 px-1.5 py-0.5 rounded font-semibold">${b.remaining_qty} left</span></p>
+          <p class="text-xs text-slate-500">Sell: <strong>${b.sell_price}</strong> | Buy: ${b.buy_price} • Added: ${dateAdded}</p>
         </div>
-        <button onclick="removeStockItem(${inv.id})" class="bg-red-100 text-red-700 hover:bg-red-200 text-xs font-bold px-2.5 py-1.5 rounded-lg">
+        <button onclick="removeBatchItem(${b.id})" class="bg-red-100 text-red-700 hover:bg-red-200 text-xs font-bold px-2.5 py-1.5 rounded-lg">
           Remove
         </button>
       </div>
@@ -195,9 +186,9 @@ async function loadAdminInventory() {
   }).join('');
 }
 
-window.removeStockItem = async function(inventoryId) {
-  if (!confirm('Remove this item from this shop\'s inventory?')) return;
-  await _supabase.from('shop_inventory').delete().eq('id', inventoryId);
+window.removeBatchItem = async function(batchId) {
+  if (!confirm('Remove this stock batch from this shop?')) return;
+  await _supabase.from('stock_batches').delete().eq('id', batchId);
   loadAdminInventory();
 };
 
@@ -242,7 +233,7 @@ async function loadAdminFinances() {
 // Admin Executive Reports
 async function loadAdminReports() {
   const { data: sales } = await _supabase.from('sales').select('*').eq('shop_id', currentShopId).order('id', { ascending: false });
-  const { data: inventory } = await _supabase.from('shop_inventory').select('*, products(*)').eq('shop_id', currentShopId);
+  const { data: batches } = await _supabase.from('stock_batches').select('*, products(*)').eq('shop_id', currentShopId);
   const { data: logs } = await _supabase.from('stock_logs').select('*').eq('shop_id', currentShopId).order('id', { ascending: false }).limit(8);
 
   let cashTotal = 0, mpesaTotal = 0, totalRev = 0, totalProf = 0;
@@ -274,8 +265,17 @@ async function loadAdminReports() {
   document.getElementById('stat-least-sold').textContent = soldEntries.length ? `${soldEntries[soldEntries.length - 1][0]} (${soldEntries[soldEntries.length - 1][1]})` : 'N/A';
   document.getElementById('stat-max-profit').textContent = profitEntries.length ? `${profitEntries[0][0]} (+${profitEntries[0][1].toFixed(2)})` : 'N/A';
 
+  // Aggregate remaining stock per product
+  const productTotals = {};
+  if (batches) {
+    batches.forEach(b => {
+      const pName = b.products.name;
+      productTotals[pName] = (productTotals[pName] || 0) + b.remaining_qty;
+    });
+  }
   let outCount = 0, inCount = 0;
-  if (inventory) inventory.forEach(inv => { inv.stock === 0 ? outCount++ : inCount++; });
+  Object.values(productTotals).forEach(total => { total === 0 ? outCount++ : inCount++; });
+
   document.getElementById('stat-out-stock').textContent = `${outCount} items`;
   document.getElementById('stat-in-stock').textContent = `${inCount} items`;
 
@@ -286,13 +286,13 @@ async function loadAdminReports() {
   document.getElementById('sales-history').innerHTML = (!sales || sales.length === 0)
     ? '<p class="text-slate-400">No sales recorded yet.</p>'
     : sales.map(s => {
-      const summary = s.items.map(i => `${i.name} (x${i.qty})`).join(', ');
+      const summary = s.items.map(i => `${i.name} (x${i.qty} @ ${i.sellPrice})`).join(', ');
       return `<div class="py-2 flex justify-between border-b border-slate-50"><div><p class="font-medium">${summary}</p><p class="text-slate-400">${new Date(s.timestamp).toLocaleString()} • ${s.payment_method}</p></div><div class="text-right"><p class="font-bold">${s.total_amount.toFixed(2)}</p><p class="text-emerald-600">+${s.total_profit.toFixed(2)}</p></div></div>`;
     }).join('');
 }
 
 // =========================================================
-// SHOPKEEPER POS & FUNCTIONS
+// SHOPKEEPER POS & FIFO SELLING LOGIC
 // =========================================================
 window.switchSkTab = function(tabId) {
   ['sell', 'sk-stock', 'sk-expenses', 'sk-reports'].forEach(id => {
@@ -314,32 +314,73 @@ document.getElementById('search-input').addEventListener('input', async (e) => {
   if (!matches || matches.length === 0) { resultsBox.innerHTML = '<p class="text-xs text-slate-400 p-2">No items found</p>'; return; }
 
   const productIds = matches.map(m => m.id);
-  const { data: inventories } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).in('product_id', productIds);
-  const invMap = {};
-  if (inventories) inventories.forEach(inv => { invMap[inv.product_id] = inv; });
+  const { data: batches } = await _supabase
+    .from('stock_batches')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .in('product_id', productIds)
+    .gt('remaining_qty', 0)
+    .order('created_at', { ascending: true });
 
   resultsBox.innerHTML = matches.map(p => {
-    const inv = invMap[p.id] || { stock: 0 };
-    const sell = p.sync_price ? p.global_sell_price : (inv.local_sell_price ?? p.global_sell_price);
-    return `<button onclick="addItemToCart(${p.id}, ${inv.stock})" class="w-full text-left py-2 px-1 hover:bg-slate-50 flex justify-between items-center"><span>${p.name} <small class="text-slate-400">(${inv.stock} left)</small></span><span class="font-semibold">${sell.toFixed(2)}</span></button>`;
+    const prodBatches = (batches || []).filter(b => b.product_id === p.id);
+    const totalStock = prodBatches.reduce((sum, b) => sum + b.remaining_qty, 0);
+    // Display the price of the oldest active FIFO batch
+    const currentPrice = prodBatches.length > 0 ? prodBatches[0].sell_price : p.global_sell_price;
+
+    return `<button onclick="addOneFromFIFO(${p.id})" class="w-full text-left py-2 px-1 hover:bg-slate-50 flex justify-between items-center">
+      <span>${p.name} <small class="text-slate-400">(${totalStock} left)</small></span>
+      <span class="font-semibold">${currentPrice.toFixed(2)}</span>
+    </button>`;
   }).join('');
 });
 
-window.addItemToCart = async function(productId, currentStock) {
-  if (currentStock <= 0) { alert('Out of stock!'); return; }
+// Adds 1 unit from the oldest available FIFO batch that isn't already maxed out in cart
+window.addOneFromFIFO = async function(productId) {
   const { data: product } = await _supabase.from('products').select('*').eq('id', productId).single();
-  const { data: shopInv } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).eq('product_id', productId).single();
+  const { data: batches } = await _supabase
+    .from('stock_batches')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .eq('product_id', productId)
+    .gt('remaining_qty', 0)
+    .order('created_at', { ascending: true });
 
-  const sellPrice = product.sync_price ? product.global_sell_price : (shopInv.local_sell_price ?? product.global_sell_price);
-  const buyPrice = product.sync_price ? product.global_buy_price : (shopInv.local_buy_price ?? product.global_buy_price);
-
-  const existing = cart.find(c => c.productId === productId);
-  if (existing) {
-    if (existing.qty + 1 > currentStock) { alert('Not enough stock.'); return; }
-    existing.qty += 1;
-  } else {
-    cart.push({ productId, name: product.name, sellPrice, buyPrice, stock: currentStock, qty: 1 });
+  if (!batches || batches.length === 0) {
+    alert('Out of stock in this shop!');
+    return;
   }
+
+  // Find the oldest batch that still has unallocated units left
+  let targetBatch = null;
+  for (const b of batches) {
+    const inCartForBatch = cart.find(c => c.batchId === b.id);
+    const usedQty = inCartForBatch ? inCartForBatch.qty : 0;
+    if (usedQty < b.remaining_qty) {
+      targetBatch = b;
+      break;
+    }
+  }
+
+  if (!targetBatch) {
+    alert('No more stock available across batches!');
+    return;
+  }
+
+  const existingLine = cart.find(c => c.batchId === targetBatch.id);
+  if (existingLine) {
+    existingLine.qty += 1;
+  } else {
+    cart.push({
+      batchId: targetBatch.id,
+      productId: product.id,
+      name: product.name,
+      qty: 1,
+      buyPrice: targetBatch.buy_price,
+      sellPrice: targetBatch.sell_price
+    });
+  }
+
   document.getElementById('search-input').value = '';
   document.getElementById('search-results').innerHTML = '';
   renderCart();
@@ -357,7 +398,16 @@ function renderCart() {
   let total = 0;
   cartList.innerHTML = cart.map((item, idx) => {
     total += item.sellPrice * item.qty;
-    return `<div class="py-2 flex justify-between items-center"><div><p class="font-medium">${item.name} x${item.qty}</p></div><div class="flex items-center gap-3"><span class="font-semibold">${(item.sellPrice * item.qty).toFixed(2)}</span><button onclick="removeFromCart(${idx})" class="text-red-500 font-bold px-2">×</button></div></div>`;
+    return `<div class="py-2 flex justify-between items-center">
+      <div>
+        <p class="font-medium">${item.name} x${item.qty}</p>
+        <p class="text-xs text-slate-400">@ ${item.sellPrice.toFixed(2)} (Batch #${item.batchId})</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="font-semibold">${(item.sellPrice * item.qty).toFixed(2)}</span>
+        <button onclick="removeFromCart(${idx})" class="text-red-500 font-bold px-2">×</button>
+      </div>
+    </div>`;
   }).join('');
   document.getElementById('cart-total').textContent = total.toFixed(2);
 }
@@ -367,11 +417,20 @@ document.getElementById('complete-sale-btn').addEventListener('click', async () 
   const payment_method = document.querySelector('input[name="payment-method"]:checked').value;
   let totalAmount = 0, totalProfit = 0;
 
-  for (const item of cart) {
-    totalAmount += item.sellPrice * item.qty;
-    totalProfit += (item.sellPrice - item.buyPrice) * item.qty;
-    const { data: shopInv } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).eq('product_id', item.productId).single();
-    await _supabase.from('shop_inventory').update({ stock: shopInv.stock - item.qty }).eq('id', shopInv.id);
+  for (const line of cart) {
+    totalAmount += line.sellPrice * line.qty;
+    totalProfit += (line.sellPrice - line.buyPrice) * line.qty;
+
+    const { data: batch } = await _supabase
+      .from('stock_batches')
+      .select('remaining_qty')
+      .eq('id', line.batchId)
+      .single();
+
+    await _supabase
+      .from('stock_batches')
+      .update({ remaining_qty: Math.max(0, batch.remaining_qty - line.qty) })
+      .eq('id', line.batchId);
   }
 
   await _supabase.from('sales').insert([{
@@ -386,11 +445,28 @@ document.getElementById('complete-sale-btn').addEventListener('click', async () 
 });
 
 async function loadSkInventory() {
-  const { data: inventory } = await _supabase.from('shop_inventory').select('*, products(*)').eq('shop_id', currentShopId);
+  const { data: batches } = await _supabase
+    .from('stock_batches')
+    .select('*, products(*)')
+    .eq('shop_id', currentShopId)
+    .gt('remaining_qty', 0)
+    .order('created_at', { ascending: true });
+
   const list = document.getElementById('sk-inventory-list');
-  list.innerHTML = (!inventory || inventory.length === 0)
-    ? '<p class="text-slate-400 py-2">No items in stock.</p>'
-    : inventory.map(inv => `<div class="py-2 flex justify-between"><span>${inv.products.name}</span><span class="font-bold ${inv.stock === 0 ? 'text-red-600' : ''}">${inv.stock} left</span></div>`).join('');
+  if (!batches || batches.length === 0) {
+    list.innerHTML = '<p class="text-slate-400 py-2">No items in stock.</p>';
+    return;
+  }
+
+  list.innerHTML = batches.map(b => `
+    <div class="py-2 flex justify-between items-center">
+      <div>
+        <p class="font-medium">${b.products.name}</p>
+        <p class="text-xs text-slate-400">Batch Price: ${b.sell_price.toFixed(2)}</p>
+      </div>
+      <span class="font-bold">${b.remaining_qty} left</span>
+    </div>
+  `).join('');
 }
 
 document.getElementById('sk-expense-form').addEventListener('submit', async (e) => {
@@ -430,8 +506,7 @@ document.getElementById('toggle-scan-btn').addEventListener('click', () => {
   html5QrCode.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, async (decodedText) => {
     const { data: product } = await _supabase.from('products').select('*').eq('barcode', decodedText).single();
     if (product) {
-      const { data: shopInv } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).eq('product_id', product.id).maybeSingle();
-      addItemToCart(product.id, shopInv ? shopInv.stock : 0);
+      addOneFromFIFO(product.id);
       html5QrCode.stop().then(() => { readerDiv.classList.add('hidden'); isScanning = false; });
     } else { alert('Barcode not found.'); }
   }).then(() => { isScanning = true; });
