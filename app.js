@@ -1,14 +1,27 @@
-// REPLACE THESE WITH YOUR SUPABASE PROJECT URL AND ANON KEY FROM SUPABASE DASHBOARD
-const SUPABASE_URL = 'https://ktkvgyicasrdzxmrafga.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_DZLo2mb2b_lCw9kN6za4sw_LY1XTdTr';
+const SUPABASE_URL = 'YOUR_SUPABASE_URL_HERE';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY_HERE';
 
 const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentShopId = parseInt(localStorage.getItem('active_shop_id') || '1', 10);
+document.getElementById('shop-selector').value = currentShopId;
+
+document.getElementById('shop-selector').addEventListener('change', (e) => {
+  currentShopId = parseInt(e.target.value, 10);
+  localStorage.setItem('active_shop_id', currentShopId);
+  cart = [];
+  renderCart();
+  alert(`Switched active shop!`);
+  const activeTab = document.querySelector('section:not(.hidden), main:not(.hidden)').id;
+  if (activeTab === 'tab-stock') loadInventory();
+  if (activeTab === 'tab-expenses') loadExpenses();
+  if (activeTab === 'tab-records') loadRecords();
+});
 
 let cart = [];
 let html5QrCode = null;
 let isScanning = false;
 
-// Navigation Tab Switcher
 window.switchTab = function(tabName) {
   ['sell', 'stock', 'expenses', 'records'].forEach(t => {
     document.getElementById(`tab-${t}`).classList.add('hidden');
@@ -20,7 +33,7 @@ window.switchTab = function(tabName) {
   if (tabName === 'records') loadRecords();
 };
 
-// 1. Stock Intake / Update (Syncs across both shop phones)
+// 1. Stock Intake / Update with Price Sync Option
 document.getElementById('stock-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = document.getElementById('item-name').value.trim();
@@ -28,63 +41,106 @@ document.getElementById('stock-form').addEventListener('submit', async (e) => {
   const buy_price = parseFloat(document.getElementById('item-buy').value);
   const sell_price = parseFloat(document.getElementById('item-sell').value);
   const qty = parseInt(document.getElementById('item-qty').value, 10);
+  const sync_price = document.getElementById('sync-price-check').checked;
 
-  // Check if item already exists by name or barcode
-  const { data: existing } = await _supabase
+  // Check if global product exists
+  let { data: product } = await _supabase
     .from('products')
     .select('*')
     .or(`name.ilike.${name}${barcode ? `,barcode.eq.${barcode}` : ''}`)
     .maybeSingle();
 
-  if (existing) {
-    // Update existing item prices and add to stock count
-    const { error } = await _supabase
-      .from('products')
-      .update({
-        buy_price,
-        sell_price,
-        barcode: barcode || existing.barcode,
-        stock: existing.stock + qty
-      })
-      .eq('id', existing.id);
+  let productId;
 
-    if (error) alert('Error updating stock: ' + error.message);
-    else alert('Stock & prices updated across all shops!');
+  if (product) {
+    productId = product.id;
+    if (sync_price) {
+      await _supabase.from('products').update({
+        global_buy_price: buy_price,
+        global_sell_price: sell_price,
+        sync_price: true,
+        barcode: barcode || product.barcode
+      }).eq('id', productId);
+    }
   } else {
-    // Insert new item
-    const { error } = await _supabase
-      .from('products')
-      .insert([{ name, barcode, buy_price, sell_price, stock: qty }]);
+    // Create new global product
+    const { data: newProd, error: prodErr } = await _supabase.from('products').insert([{
+      name,
+      barcode,
+      sync_price,
+      global_buy_price: buy_price,
+      global_sell_price: sell_price
+    }]).select().single();
 
-    if (error) alert('Error adding item: ' + error.message);
-    else alert('New item added and synced!');
+    if (prodErr) {
+      alert('Error creating product: ' + prodErr.message);
+      return;
+    }
+    productId = newProd.id;
+  }
+
+  // Check shop inventory record for this shop
+  const { data: shopInv } = await _supabase
+    .from('shop_inventory')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .eq('product_id', productId)
+    .maybeSingle();
+
+  if (shopInv) {
+    await _supabase.from('shop_inventory').update({
+      stock: shopInv.stock + qty,
+      local_buy_price: sync_price ? null : buy_price,
+      local_sell_price: sync_price ? null : sell_price
+    }).eq('id', shopInv.id);
+  } else {
+    await _supabase.from('shop_inventory').insert([{
+      shop_id: currentShopId,
+      product_id: productId,
+      stock: qty,
+      local_buy_price: sync_price ? null : buy_price,
+      local_sell_price: sync_price ? null : sell_price
+    }]);
   }
 
   e.target.reset();
   loadInventory();
+  alert('Stock saved successfully for this shop!');
 });
 
 async function loadInventory() {
-  const { data: products, error } = await _supabase.from('products').select('*').order('name');
+  const { data: inventory } = await _supabase
+    .from('shop_inventory')
+    .select('*, products(*)')
+    .eq('shop_id', currentShopId);
+
   const list = document.getElementById('inventory-list');
-  if (error || !products || products.length === 0) {
-    list.innerHTML = '<p class="text-slate-400 py-2">No products found.</p>';
+  if (!inventory || inventory.length === 0) {
+    list.innerHTML = '<p class="text-slate-400 py-2">No items in stock for this shop.</p>';
     return;
   }
-  list.innerHTML = products.map(p => `
-    <div class="py-2.5 flex justify-between items-center">
-      <div>
-        <p class="font-medium">${p.name} ${p.barcode ? `<span class="text-xs bg-slate-200 px-1.5 py-0.5 rounded">${p.barcode}</span>` : ''}</p>
-        <p class="text-xs text-slate-500">Buy: ${p.buy_price} | Sell: ${p.sell_price} | Profit: ${(p.sell_price - p.buy_price).toFixed(2)}</p>
+
+  list.innerHTML = inventory.map(inv => {
+    const p = inv.products;
+    const sell = p.sync_price ? p.global_sell_price : (inv.local_sell_price ?? p.global_sell_price);
+    const buy = p.sync_price ? p.global_buy_price : (inv.local_buy_price ?? p.global_buy_price);
+    const profit = sell - buy;
+
+    return `
+      <div class="py-2.5 flex justify-between items-center">
+        <div>
+          <p class="font-medium">${p.name} ${p.barcode ? `<span class="text-xs bg-slate-200 px-1.5 py-0.5 rounded">${p.barcode}</span>` : ''}</p>
+          <p class="text-xs text-slate-500">Sell: ${sell.toFixed(2)} | Profit: ${profit.toFixed(2)} ${p.sync_price ? '(Synced Price)' : '(Custom Price)'}</p>
+        </div>
+        <span class="font-bold px-2.5 py-1 rounded-lg ${inv.stock <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100'}">
+          ${inv.stock} left
+        </span>
       </div>
-      <span class="font-bold px-2.5 py-1 rounded-lg ${p.stock <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100'}">
-        ${p.stock} left
-      </span>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
-// 2. Manual Search & Cart Handling
+// 2. Search & Cart (Using Shop Inventory)
 document.getElementById('search-input').addEventListener('input', async (e) => {
   const query = e.target.value.trim().toLowerCase();
   const resultsBox = document.getElementById('search-results');
@@ -93,6 +149,7 @@ document.getElementById('search-input').addEventListener('input', async (e) => {
     return;
   }
 
+  // Search global products
   const { data: matches } = await _supabase
     .from('products')
     .select('*')
@@ -103,30 +160,57 @@ document.getElementById('search-input').addEventListener('input', async (e) => {
     return;
   }
 
-  resultsBox.innerHTML = matches.map(p => `
-    <button onclick="addToCart(${p.id})" class="w-full text-left py-2 px-1 hover:bg-slate-50 flex justify-between items-center">
-      <span>${p.name} <small class="text-slate-400">(${p.stock} in stock)</small></span>
-      <span class="font-semibold">${p.sell_price.toFixed(2)}</span>
-    </button>
-  `).join('');
+  // Fetch shop inventory for these matches
+  const productIds = matches.map(m => m.id);
+  const { data: inventories } = await _supabase
+    .from('shop_inventory')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .in('product_id', productIds);
+
+  const invMap = {};
+  if (inventories) inventories.forEach(inv => { invMap[inv.product_id] = inv; });
+
+  resultsBox.innerHTML = matches.map(p => {
+    const inv = invMap[p.id] || { stock: 0 };
+    const sell = p.sync_price ? p.global_sell_price : (inv.local_sell_price ?? p.global_sell_price);
+    return `
+      <button onclick="addItemToCart(${p.id}, ${inv.stock})" class="w-full text-left py-2 px-1 hover:bg-slate-50 flex justify-between items-center">
+        <span>${p.name} <small class="text-slate-400">(${inv.stock} in this shop)</small></span>
+        <span class="font-semibold">${sell.toFixed(2)}</span>
+      </button>
+    `;
+  }).join('');
 });
 
-window.addToCart = async function(productId) {
-  const { data: product } = await _supabase.from('products').select('*').eq('id', productId).single();
-  if (!product || product.stock <= 0) {
-    alert('Out of stock!');
+window.addItemToCart = async function(productId, currentStock) {
+  if (currentStock <= 0) {
+    alert('Item is out of stock in this shop! Please restock it first.');
     return;
   }
 
-  const existing = cart.find(c => c.id === product.id);
+  const { data: product } = await _supabase.from('products').select('*').eq('id', productId).single();
+  const { data: shopInv } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).eq('product_id', productId).single();
+
+  const sellPrice = product.sync_price ? product.global_sell_price : (shopInv.local_sell_price ?? product.global_sell_price);
+  const buyPrice = product.sync_price ? product.global_buy_price : (shopInv.local_buy_price ?? product.global_buy_price);
+
+  const existing = cart.find(c => c.productId === productId);
   if (existing) {
-    if (existing.qty + 1 > product.stock) {
-      alert('Not enough stock available.');
+    if (existing.qty + 1 > currentStock) {
+      alert('Not enough stock available in this shop.');
       return;
     }
     existing.qty += 1;
   } else {
-    cart.push({ ...product, qty: 1 });
+    cart.push({
+      productId,
+      name: product.name,
+      sellPrice,
+      buyPrice,
+      stock: currentStock,
+      qty: 1
+    });
   }
 
   document.getElementById('search-input').value = '';
@@ -152,15 +236,15 @@ function renderCart() {
   let profit = 0;
 
   cartList.innerHTML = cart.map((item, idx) => {
-    const lineTotal = item.sell_price * item.qty;
-    const lineProfit = (item.sell_price - item.buy_price) * item.qty;
+    const lineTotal = item.sellPrice * item.qty;
+    const lineProfit = (item.sellPrice - item.buyPrice) * item.qty;
     total += lineTotal;
     profit += lineProfit;
     return `
       <div class="py-2 flex justify-between items-center">
         <div>
           <p class="font-medium">${item.name} x${item.qty}</p>
-          <p class="text-xs text-slate-400">@ ${item.sell_price.toFixed(2)}</p>
+          <p class="text-xs text-slate-400">@ ${item.sellPrice.toFixed(2)}</p>
         </div>
         <div class="flex items-center gap-3">
           <span class="font-semibold">${lineTotal.toFixed(2)}</span>
@@ -174,7 +258,7 @@ function renderCart() {
   document.getElementById('cart-profit').textContent = profit.toFixed(2);
 }
 
-// 3. Complete Sale (Cash or M-Pesa + Live Stock Deduction)
+// 3. Complete Sale for Active Shop
 document.getElementById('complete-sale-btn').addEventListener('click', async () => {
   if (cart.length === 0) return;
 
@@ -183,22 +267,31 @@ document.getElementById('complete-sale-btn').addEventListener('click', async () 
   let totalProfit = 0;
 
   for (const item of cart) {
-    totalAmount += item.sell_price * item.qty;
-    totalProfit += (item.sell_price - item.buy_price) * item.qty;
+    totalAmount += item.sellPrice * item.qty;
+    totalProfit += (item.sellPrice - item.buyPrice) * item.qty;
 
-    // Deduct stock in Supabase database
+    // Fetch current inventory record for this shop
+    const { data: shopInv } = await _supabase
+      .from('shop_inventory')
+      .select('*')
+      .eq('shop_id', currentShopId)
+      .eq('product_id', item.productId)
+      .single();
+
+    // Deduct stock strictly for this shop
     await _supabase
-      .from('products')
-      .update({ stock: item.stock - item.qty })
-      .eq('id', item.id);
+      .from('shop_inventory')
+      .update({ stock: shopInv.stock - item.qty })
+      .eq('id', shopInv.id);
   }
 
   const { error } = await _supabase.from('sales').insert([{
+    shop_id: currentShopId,
     timestamp: new Date().toISOString(),
     total_amount: totalAmount,
     total_profit: totalProfit,
     payment_method,
-    items: cart.map(c => ({ name: c.name, qty: c.qty, sell_price: c.sell_price }))
+    items: cart.map(c => ({ name: c.name, qty: c.qty, sellPrice: c.sellPrice }))
   }]);
 
   if (error) {
@@ -208,16 +301,17 @@ document.getElementById('complete-sale-btn').addEventListener('click', async () 
 
   cart = [];
   renderCart();
-  alert(`Sale recorded successfully via ${payment_method}!`);
+  alert(`Sale recorded via ${payment_method} for current shop!`);
 });
 
-// 4. Expenses Tracker
+// 4. Expenses for Active Shop
 document.getElementById('expense-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const description = document.getElementById('exp-desc').value.trim();
   const amount = parseFloat(document.getElementById('exp-amount').value);
 
   const { error } = await _supabase.from('expenses').insert([{
+    shop_id: currentShopId,
     timestamp: new Date().toISOString(),
     description,
     amount
@@ -232,10 +326,15 @@ document.getElementById('expense-form').addEventListener('submit', async (e) => 
 });
 
 async function loadExpenses() {
-  const { data: expenses } = await _supabase.from('expenses').select('*').order('id', { ascending: false });
+  const { data: expenses } = await _supabase
+    .from('expenses')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .order('id', { ascending: false });
+
   const list = document.getElementById('expenses-list');
   if (!expenses || expenses.length === 0) {
-    list.innerHTML = '<p class="text-slate-400 py-2">No expenses logged yet.</p>';
+    list.innerHTML = '<p class="text-slate-400 py-2">No expenses logged for this shop today.</p>';
     return;
   }
 
@@ -250,21 +349,27 @@ async function loadExpenses() {
   `).join('');
 }
 
-// 5. Daily Reports & Breakdown (Cash vs M-Pesa + Profit)
+// 5. Reports for Active Shop
 async function loadRecords() {
-  const { data: sales } = await _supabase.from('sales').select('*').order('id', { ascending: false });
+  const { data: sales } = await _supabase
+    .from('sales')
+    .select('*')
+    .eq('shop_id', currentShopId)
+    .order('id', { ascending: false });
   
   let cashTotal = 0;
   let mpesaTotal = 0;
   let totalRev = 0;
   let totalProf = 0;
 
-  sales.forEach(s => {
-    totalRev += s.total_amount;
-    totalProf += s.total_profit;
-    if (s.payment_method === 'Cash') cashTotal += s.total_amount;
-    if (s.payment_method === 'M-Pesa') mpesaTotal += s.total_amount;
-  });
+  if (sales) {
+    sales.forEach(s => {
+      totalRev += s.total_amount;
+      totalProf += s.total_profit;
+      if (s.payment_method === 'Cash') cashTotal += s.total_amount;
+      if (s.payment_method === 'M-Pesa') mpesaTotal += s.total_amount;
+    });
+  }
 
   document.getElementById('cash-revenue').textContent = cashTotal.toFixed(2);
   document.getElementById('mpesa-revenue').textContent = mpesaTotal.toFixed(2);
@@ -273,7 +378,7 @@ async function loadRecords() {
 
   const historyDiv = document.getElementById('sales-history');
   if (!sales || sales.length === 0) {
-    historyDiv.innerHTML = '<p class="text-slate-400 py-2">No sales recorded yet.</p>';
+    historyDiv.innerHTML = '<p class="text-slate-400 py-2">No sales recorded for this shop yet.</p>';
     return;
   }
 
@@ -295,7 +400,7 @@ async function loadRecords() {
   }).join('');
 }
 
-// 6. Camera Scanner
+// 6. Camera Scanner (Checks barcode against global catalog and active shop stock)
 document.getElementById('toggle-scan-btn').addEventListener('click', () => {
   const readerDiv = document.getElementById('reader');
   if (isScanning) {
@@ -314,13 +419,15 @@ document.getElementById('toggle-scan-btn').addEventListener('click', () => {
     async (decodedText) => {
       const { data: product } = await _supabase.from('products').select('*').eq('barcode', decodedText).single();
       if (product) {
-        addToCart(product.id);
+        const { data: shopInv } = await _supabase.from('shop_inventory').select('*').eq('shop_id', currentShopId).eq('product_id', product.id).maybeSingle();
+        const stock = shopInv ? shopInv.stock : 0;
+        addItemToCart(product.id, stock);
         html5QrCode.stop().then(() => {
           readerDiv.classList.add('hidden');
           isScanning = false;
         });
       } else {
-        alert(`Code "${decodedText}" not found in inventory.`);
+        alert(`Barcode "${decodedText}" not recognized in system.`);
       }
     }
   ).then(() => { isScanning = true; });
@@ -340,9 +447,9 @@ document.getElementById('scan-stock-code-btn').addEventListener('click', () => {
   );
 });
 
-// CSV Export
+// CSV Export for Active Shop
 document.getElementById('export-csv-btn').addEventListener('click', async () => {
-  const { data: sales } = await _supabase.from('sales').select('*');
+  const { data: sales } = await _supabase.from('sales').select('*').eq('shop_id', currentShopId);
   let csv = 'Date,Payment Method,Items,Total Sale,Net Profit\n';
   sales.forEach(s => {
     const itemsStr = s.items.map(i => `${i.name} x${i.qty}`).join(' | ');
@@ -353,6 +460,6 @@ document.getElementById('export-csv-btn').addEventListener('click', async () => 
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `shop-records-${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `shop-${currentShopId}-records-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 });
