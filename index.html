@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Multi-Shop POS & Admin</title>
+  <title>Multi-Shop POS & Admin Portal</title>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0f172a" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -16,13 +16,13 @@
   <div id="login-overlay" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-4">
     <div class="bg-white w-full max-w-sm p-6 rounded-2xl shadow-xl space-y-4">
       <div class="text-center">
-        <h1 class="text-xl font-bold text-slate-900">Shop Login</h1>
-        <p class="text-xs text-slate-500">Sign in as Admin or Shopkeeper</p>
+        <h1 class="text-xl font-bold text-slate-900">Shop System Login</h1>
+        <p class="text-xs text-slate-500">Sign in as Admin Manager or Shopkeeper</p>
       </div>
       <form id="login-form" class="space-y-3">
         <div>
           <label class="text-xs font-medium text-slate-600">Username</label>
-          <input id="login-user" type="text" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:border-slate-900" placeholder="e.g. admin or makumi" />
+          <input id="login-user" type="text" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:border-slate-900" placeholder="admin, makumi, or gods" />
         </div>
         <div>
           <label class="text-xs font-medium text-slate-600">Password</label>
@@ -35,18 +35,18 @@
     </div>
   </div>
 
-  <!-- Main App Header -->
+  <!-- HEADER -->
   <header class="bg-slate-900 text-white p-3 sticky top-0 z-25 flex flex-col gap-2 shadow">
     <div class="flex justify-between items-center">
-      <h1 id="app-title" class="font-bold text-base tracking-wide">POS System</h1>
+      <h1 id="app-title" class="font-bold text-base tracking-wide">Shop System</h1>
       <div class="flex items-center gap-2">
-        <span id="user-badge" class="text-xs px-2 py-0.5 rounded bg-blue-600 font-medium"></span>
+        <span id="user-badge" class="text-xs px-2 py-0.5 rounded font-medium"></span>
         <button onclick="logout()" class="text-xs bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded">Logout</button>
       </div>
     </div>
-    <!-- Shop Switcher (Admin Only or display assigned shop for shopkeeper) -->
-    <div id="shop-switcher-wrapper" class="flex items-center gap-2 bg-slate-800 p-2 rounded-lg">
-      <span class="text-xs text-slate-400 whitespace-nowrap">Active Shop:</span>
+    <!-- Admin Shop Switcher -->
+    <div id="shop-switcher-wrapper" class="hidden flex items-center gap-2 bg-slate-800 p-2 rounded-lg">
+      <span class="text-xs text-slate-400 whitespace-nowrap">Managing Shop:</span>
       <select id="shop-selector" class="w-full bg-slate-900 text-white text-sm font-semibold rounded px-2 py-1 focus:outline-none">
         <option value="1">Makumi Kihanya Traders</option>
         <option value="2">God's Grace Shop</option>
@@ -54,177 +54,250 @@
     </div>
   </header>
 
-  <!-- TAB 1: SELL -->
-  <main id="tab-sell" class="p-4 space-y-4">
-    <div class="bg-white p-3 rounded-xl shadow-sm space-y-3">
-      <div class="flex gap-2">
-        <input id="search-input" type="text" placeholder="Search item name or code..."
-          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:border-slate-900" />
-        <button id="toggle-scan-btn" class="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium whitespace-nowrap">
-          Scan
+  <!-- =========================================================
+       SHOPKEEPER VIEW (POS REGISTER, STOCK VIEW, EXPENSES)
+       ========================================================= -->
+  <div id="shopkeeper-view" class="hidden">
+    <!-- TAB: SELL (POS - Shopkeeper Only) -->
+    <main id="tab-sell" class="p-4 space-y-4">
+      <div class="bg-white p-3 rounded-xl shadow-sm space-y-3">
+        <div class="flex gap-2">
+          <input id="search-input" type="text" placeholder="Search item name or code..."
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:border-slate-900" />
+          <button id="toggle-scan-btn" class="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium whitespace-nowrap">
+            Scan
+          </button>
+        </div>
+        <div id="reader" class="hidden rounded-lg overflow-hidden border border-slate-300"></div>
+        <div id="search-results" class="divide-y divide-slate-100 max-h-40 overflow-y-auto"></div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+        <h2 class="font-semibold text-slate-700">Customer Basket</h2>
+        <div id="cart-list" class="divide-y divide-slate-100 text-sm">
+          <p class="text-slate-400 py-2">No items added yet.</p>
+        </div>
+        <div class="border-t pt-3 flex justify-between items-center font-bold text-lg">
+          <span>Total:</span>
+          <span id="cart-total">0.00</span>
+        </div>
+
+        <div class="pt-2 border-t">
+          <label class="block text-xs font-medium text-slate-500 mb-1">Payment Method:</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="border rounded-lg p-2 flex items-center justify-center gap-2 cursor-pointer bg-slate-50 font-medium">
+              <input type="radio" name="payment-method" value="Cash" checked class="accent-slate-900"> Cash
+            </label>
+            <label class="border rounded-lg p-2 flex items-center justify-center gap-2 cursor-pointer bg-slate-50 font-medium">
+              <input type="radio" name="payment-method" value="M-Pesa" class="accent-slate-900"> M-Pesa
+            </label>
+          </div>
+        </div>
+
+        <button id="complete-sale-btn" class="w-full bg-emerald-600 active:bg-emerald-700 text-white font-bold py-3 rounded-xl text-base shadow">
+          Complete Sale
         </button>
       </div>
-      <div id="reader" class="hidden rounded-lg overflow-hidden border border-slate-300"></div>
-      <div id="search-results" class="divide-y divide-slate-100 max-h-40 overflow-y-auto"></div>
-    </div>
+    </main>
 
-    <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Current Basket</h2>
-      <div id="cart-list" class="divide-y divide-slate-100 text-sm">
-        <p class="text-slate-400 py-2">No items added yet.</p>
+    <!-- TAB: SHOPKEEPER STOCK VIEW -->
+    <section id="tab-sk-stock" class="hidden p-4 space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm">
+        <h2 class="font-semibold text-slate-700 mb-2">Shop Inventory Levels</h2>
+        <div id="sk-inventory-list" class="divide-y divide-slate-100 text-sm"></div>
       </div>
-      <div class="border-t pt-3 flex justify-between items-center font-bold text-lg">
-        <span>Total:</span>
-        <span id="cart-total">0.00</span>
-      </div>
-      <div class="flex justify-between text-xs text-emerald-700 font-medium">
-        <span>Estimated Profit:</span>
-        <span id="cart-profit">0.00</span>
-      </div>
+    </section>
 
-      <div class="pt-2 border-t">
-        <label class="block text-xs font-medium text-slate-500 mb-1">Payment Method:</label>
-        <div class="grid grid-cols-2 gap-2">
-          <label class="border rounded-lg p-2 flex items-center justify-center gap-2 cursor-pointer bg-slate-50 font-medium">
-            <input type="radio" name="payment-method" value="Cash" checked class="accent-slate-900"> Cash
-          </label>
-          <label class="border rounded-lg p-2 flex items-center justify-center gap-2 cursor-pointer bg-slate-50 font-medium">
-            <input type="radio" name="payment-method" value="M-Pesa" class="accent-slate-900"> M-Pesa
-          </label>
-        </div>
-      </div>
-
-      <button id="complete-sale-btn" class="w-full bg-emerald-600 active:bg-emerald-700 text-white font-bold py-3 rounded-xl text-base shadow">
-        Complete Sale
-      </button>
-    </div>
-  </main>
-
-  <!-- TAB 2: STOCK -->
-  <section id="tab-stock" class="hidden p-4 space-y-4">
-    <form id="stock-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Add Stock & Prices</h2>
-      <input id="item-name" type="text" placeholder="Item Name (e.g., Sugar 1kg)" required
-        class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-      <div class="flex gap-2">
-        <input id="item-code" type="text" placeholder="QR / Barcode (Optional)"
+    <!-- TAB: SHOPKEEPER EXPENSES -->
+    <section id="tab-sk-expenses" class="hidden p-4 space-y-4">
+      <form id="sk-expense-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+        <h2 class="font-semibold text-slate-700">Log Shop Expenditure</h2>
+        <input id="sk-exp-desc" type="text" placeholder="What was bought? (e.g., Bags, Airtime)" required
           class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-        <button type="button" id="scan-stock-code-btn" class="bg-slate-200 px-3 py-2 rounded-lg text-sm font-medium">
-          Scan
+        <input id="sk-exp-amount" type="number" step="0.01" placeholder="Amount Spent" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+          Record Expense
         </button>
+      </form>
+      <div class="bg-white p-4 rounded-xl shadow-sm">
+        <h2 class="font-semibold text-slate-700 mb-2">Shop Expenses & Allocations</h2>
+        <div id="sk-expenses-list" class="divide-y divide-slate-100 text-sm"></div>
       </div>
-      <div id="stock-reader" class="hidden rounded-lg overflow-hidden"></div>
+    </section>
 
-      <!-- Admin Price Sync Control -->
-      <div id="price-sync-container" class="bg-slate-50 p-2.5 rounded-lg border flex items-center gap-2">
-        <input type="checkbox" id="sync-price-check" checked class="w-4 h-4 accent-slate-900" />
-        <label for="sync-price-check" class="text-xs text-slate-700 font-medium">Admin: Sync price globally across both shops</label>
+    <!-- TAB: SHOPKEEPER SUMMARY -->
+    <section id="tab-sk-reports" class="hidden p-4 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">Cash Sales</p>
+          <p id="sk-cash-rev" class="text-lg font-bold text-slate-900">0.00</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">M-Pesa Sales</p>
+          <p id="sk-mpesa-rev" class="text-lg font-bold text-emerald-600">0.00</p>
+        </div>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm">
+        <h2 class="font-semibold text-slate-700 mb-2">Recent Sales</h2>
+        <div id="sk-sales-history" class="divide-y divide-slate-100 text-xs"></div>
+      </div>
+    </section>
+
+    <!-- Shopkeeper Bottom Nav -->
+    <nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 flex justify-around py-2.5 z-20">
+      <button onclick="switchSkTab('sell')" class="font-bold text-slate-900 text-xs">Sell (POS)</button>
+      <button onclick="switchSkTab('sk-stock')" class="text-slate-600 font-medium text-xs">Stock</button>
+      <button onclick="switchSkTab('sk-expenses')" class="text-slate-600 font-medium text-xs">Expenses</button>
+      <button onclick="switchSkTab('sk-reports')" class="text-slate-600 font-medium text-xs">Daily Summary</button>
+    </nav>
+  </div>
+
+  <!-- =========================================================
+       ADMIN MANAGER PORTAL (NO POS - MANAGEMENT ONLY)
+       ========================================================= -->
+  <div id="admin-view" class="hidden">
+    
+    <!-- ADMIN TAB 1: MANAGE STOCK (ADD / UPDATE / REMOVE) -->
+    <section id="admin-tab-stock" class="p-4 space-y-4">
+      <form id="admin-stock-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+        <h2 class="font-semibold text-slate-800">Add or Update Stock for Selected Shop</h2>
+        <input id="item-name" type="text" placeholder="Item Name (e.g., Sugar 1kg)" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <div class="flex gap-2">
+          <input id="item-code" type="text" placeholder="Barcode / QR (Optional)"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+          <button type="button" id="scan-stock-code-btn" class="bg-slate-200 px-3 py-2 rounded-lg text-sm font-medium">
+            Scan
+          </button>
+        </div>
+        <div id="stock-reader" class="hidden rounded-lg overflow-hidden"></div>
+
+        <div class="bg-slate-50 p-2.5 rounded-lg border flex items-center gap-2">
+          <input type="checkbox" id="sync-price-check" checked class="w-4 h-4 accent-slate-900" />
+          <label for="sync-price-check" class="text-xs text-slate-700 font-medium">Sync price globally across both shops</label>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="text-xs text-slate-500">Buy Price</label>
+            <input id="item-buy" type="number" step="0.01" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Sell Price</label>
+            <input id="item-sell" type="number" step="0.01" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Qty Added</label>
+            <input id="item-qty" type="number" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+          Save & Update Stock
+        </button>
+      </form>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm">
+        <h2 class="font-semibold text-slate-800 mb-2">Manage Shop Inventory (Remove / Adjust)</h2>
+        <div id="admin-inventory-list" class="divide-y divide-slate-100 text-sm"></div>
+      </div>
+    </section>
+
+    <!-- ADMIN TAB 2: ALLOCATE MONEY & MANAGE EXPENSES -->
+    <section id="admin-tab-finance" class="hidden p-4 space-y-4">
+      <!-- Allocate Money Form -->
+      <form id="allocation-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3 border-l-4 border-emerald-600">
+        <h2 class="font-semibold text-slate-800">Allocate Money to Selected Shop</h2>
+        <input id="alloc-purpose" type="text" placeholder="Purpose (e.g., Restock Float, Petty Cash)" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <input id="alloc-amount" type="number" step="0.01" placeholder="Amount Allocated" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <button type="submit" class="w-full bg-emerald-700 text-white font-bold py-2.5 rounded-xl">
+          Allocate Funds
+        </button>
+      </form>
+
+      <!-- Log Expense Form -->
+      <form id="admin-expense-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3 border-l-4 border-red-500">
+        <h2 class="font-semibold text-slate-800">Log Shop Expense</h2>
+        <input id="admin-exp-desc" type="text" placeholder="Expense Description (e.g., Rent, Delivery)" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <input id="admin-exp-amount" type="number" step="0.01" placeholder="Amount Spent" required
+          class="w-full border border-slate-300 rounded-lg px-3 py-2" />
+        <button type="submit" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl">
+          Record Expense
+        </button>
+      </form>
+
+      <!-- Finance Ledger -->
+      <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+        <h2 class="font-semibold text-slate-800">Money Allocations History</h2>
+        <div id="admin-allocations-list" class="divide-y divide-slate-100 text-xs"></div>
       </div>
 
-      <div class="grid grid-cols-3 gap-2">
-        <div>
-          <label class="text-xs text-slate-500">Buy Price</label>
-          <input id="item-buy" type="number" step="0.01" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
+      <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
+        <h2 class="font-semibold text-slate-800">Shop Expenses History</h2>
+        <div id="admin-expenses-list" class="divide-y divide-slate-100 text-xs"></div>
+      </div>
+    </section>
+
+    <!-- ADMIN TAB 3: EXECUTIVE REPORTS & ANALYTICS -->
+    <section id="admin-tab-reports" class="hidden p-4 space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">Cash Revenue</p>
+          <p id="cash-revenue" class="text-lg font-bold text-slate-900">0.00</p>
         </div>
-        <div>
-          <label class="text-xs text-slate-500">Sell Price</label>
-          <input id="item-sell" type="number" step="0.01" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Qty Added</label>
-          <input id="item-qty" type="number" required class="w-full border border-slate-300 rounded-lg px-2 py-2" />
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">M-Pesa Revenue</p>
+          <p id="mpesa-revenue" class="text-lg font-bold text-emerald-600">0.00</p>
         </div>
       </div>
-      <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
-        Save Stock
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">Total Sales</p>
+          <p id="total-revenue" class="text-lg font-bold text-slate-900">0.00</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm">
+          <p class="text-xs text-slate-500">Net Profit</p>
+          <p id="total-profit" class="text-lg font-bold text-blue-600">0.00</p>
+        </div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm space-y-2.5">
+        <h2 class="font-semibold text-slate-800">Shop Performance Analytics</h2>
+        <div class="text-xs space-y-2">
+          <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Most Sold Item:</span> <span id="stat-most-sold" class="font-semibold">N/A</span></div>
+          <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Greatest Profit Item:</span> <span id="stat-max-profit" class="font-semibold text-emerald-600">N/A</span></div>
+          <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Least Sold Item:</span> <span id="stat-least-sold" class="font-semibold">N/A</span></div>
+          <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Out of Stock Items:</span> <span id="stat-out-stock" class="font-semibold text-red-600">0</span></div>
+          <div class="flex justify-between"><span class="text-slate-500">Items In Stock:</span> <span id="stat-in-stock" class="font-semibold text-slate-800">0</span></div>
+        </div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm">
+        <h2 class="font-semibold text-slate-800 mb-2">Stock Addition Notifications</h2>
+        <div id="stock-notifications-list" class="divide-y divide-slate-100 text-xs max-h-36 overflow-y-auto"></div>
+      </div>
+
+      <button id="export-csv-btn" class="w-full bg-slate-800 text-white py-2.5 rounded-xl text-sm font-medium">
+        Export Shop CSV Report
       </button>
-    </form>
 
-    <div class="bg-white p-4 rounded-xl shadow-sm">
-      <h2 class="font-semibold text-slate-700 mb-2">Inventory & Stock Status</h2>
-      <div id="inventory-list" class="divide-y divide-slate-100 text-sm"></div>
-    </div>
-  </section>
-
-  <!-- TAB 3: EXPENSES -->
-  <section id="tab-expenses" class="hidden p-4 space-y-4">
-    <form id="expense-form" class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Log Daily Expenditure</h2>
-      <input id="exp-desc" type="text" placeholder="Description (e.g., Transport, Electricity)" required
-        class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-      <input id="exp-amount" type="number" step="0.01" placeholder="Amount Spent" required
-        class="w-full border border-slate-300 rounded-lg px-3 py-2" />
-      <button type="submit" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
-        Record Expense
-      </button>
-    </form>
-
-    <div class="bg-white p-4 rounded-xl shadow-sm">
-      <h2 class="font-semibold text-slate-700 mb-2">Today's Expenses</h2>
-      <div id="expenses-list" class="divide-y divide-slate-100 text-sm"></div>
-    </div>
-  </section>
-
-  <!-- TAB 4: REPORTS & ANALYTICS -->
-  <section id="tab-reports" class="hidden p-4 space-y-4">
-    <div class="grid grid-cols-2 gap-3">
       <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">Cash Sales</p>
-        <p id="cash-revenue" class="text-lg font-bold text-slate-900">0.00</p>
+        <h2 class="font-semibold text-slate-800 mb-2">Complete Sales Ledger</h2>
+        <div id="sales-history" class="divide-y divide-slate-100 text-xs"></div>
       </div>
-      <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">M-Pesa Sales</p>
-        <p id="mpesa-revenue" class="text-lg font-bold text-emerald-600">0.00</p>
-      </div>
-    </div>
+    </section>
 
-    <div class="grid grid-cols-2 gap-3">
-      <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">Total Revenue</p>
-        <p id="total-revenue" class="text-lg font-bold text-slate-900">0.00</p>
-      </div>
-      <div class="bg-white p-4 rounded-xl shadow-sm">
-        <p class="text-xs text-slate-500">Net Profit</p>
-        <p id="total-profit" class="text-lg font-bold text-blue-600">0.00</p>
-      </div>
-    </div>
-
-    <!-- Advanced Analytics & Highlights -->
-    <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
-      <h2 class="font-semibold text-slate-700">Shop Performance Highlights</h2>
-      <div class="text-xs space-y-2">
-        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Most Sold Item:</span> <span id="stat-most-sold" class="font-semibold">N/A</span></div>
-        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Highest Profit Item:</span> <span id="stat-max-profit" class="font-semibold text-emerald-600">N/A</span></div>
-        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Least Sold Item:</span> <span id="stat-least-sold" class="font-semibold">N/A</span></div>
-        <div class="flex justify-between border-b pb-1.5"><span class="text-slate-500">Out of Stock Count:</span> <span id="stat-out-stock" class="font-semibold text-red-600">0 items</span></div>
-      </div>
-    </div>
-
-    <!-- Stock Addition Notifications Feed -->
-    <div class="bg-white p-4 rounded-xl shadow-sm">
-      <h2 class="font-semibold text-slate-700 mb-2">Stock Addition Activity Log</h2>
-      <div id="stock-notifications-list" class="divide-y divide-slate-100 text-xs max-h-36 overflow-y-auto">
-        <p class="text-slate-400 py-1">No recent stock additions.</p>
-      </div>
-    </div>
-
-    <button id="export-csv-btn" class="w-full bg-slate-800 text-white py-2.5 rounded-xl text-sm font-medium">
-      Export Sales Records (CSV)
-    </button>
-
-    <div class="bg-white p-4 rounded-xl shadow-sm">
-      <h2 class="font-semibold text-slate-700 mb-2">Sales History Ledger</h2>
-      <div id="sales-history" class="divide-y divide-slate-100 text-sm"></div>
-    </div>
-  </section>
-
-  <!-- Bottom Navigation -->
-  <nav class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 flex justify-around py-2 z-20">
-    <button onclick="switchTab('sell')" class="nav-btn font-bold text-slate-900 flex flex-col items-center text-xs"><span>Sell</span></button>
-    <button onclick="switchTab('stock')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Stock</span></button>
-    <button onclick="switchTab('expenses')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Expenses</span></button>
-    <button onclick="switchTab('reports')" class="nav-btn text-slate-500 flex flex-col items-center text-xs"><span>Reports</span></button>
-  </nav>
+    <!-- Admin Bottom Nav (3 Management Tabs Only - No POS) -->
+    <nav class="fixed bottom-0 inset-x-0 bg-slate-900 text-white flex justify-around py-3 z-20">
+      <button onclick="switchAdminTab('admin-tab-stock')" class="font-bold text-xs">Manage Stock</button>
+      <button onclick="switchAdminTab('admin-tab-finance')" class="font-bold text-xs">Funds & Expenses</button>
+      <button onclick="switchAdminTab('admin-tab-reports')" class="font-bold text-xs">Reports & Analytics</button>
+    </nav>
+  </div>
 
   <script src="app.js"></script>
 </body>
